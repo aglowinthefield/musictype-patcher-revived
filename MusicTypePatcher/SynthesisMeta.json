@@ -1,0 +1,9 @@
+{
+  "Nickname": "MusicTypePatcher-Revised-2024",
+  "Visibility": "Visible",
+  "OneLineDescription": "A Patcher for merging additions to MusicType records.",
+  "LongDescription": "",
+  "PreferredAutoVersioning": "Default",
+  "RequiredMods": [],
+  "TargetedReleases": []
+}
