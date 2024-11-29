@@ -24,13 +24,15 @@ namespace MusicTypePatcher
                 .Run(args);
         }
 
-        private static IEnumerable<IModContext<TGet>> ExtentContexts<TGet>(IPatcherState<ISkyrimMod, ISkyrimModGetter> state, FormKey formKey)
+        private static IEnumerable<IModContext<TGet>> ExtentContexts<TGet>(
+            IPatcherState<ISkyrimMod, ISkyrimModGetter> state,
+            IReadOnlyDictionary<ModKey, ModKey[]> masterLookup,
+            IFormLinkGetter<TGet> link)
             where TGet : class, IMajorRecordGetter
         {
             // Get every context for this musicType
-            var contexts = state.LinkCache.ResolveAllSimpleContexts<TGet>(formKey).ToArray();
-            var masters = contexts.SelectMany(i => state.LoadOrder.TryGetValue(i.ModKey)?.Mod?.MasterReferences ?? new List<IMasterReferenceGetter>(), (i, g) => g.Master)
-                .ToHashSet();
+            var contexts = link.ResolveAllSimpleContexts(state.LinkCache).ToArray();
+            var masters = contexts.SelectMany(i => masterLookup.GetValueOrDefault(i.ModKey) ?? []).ToHashSet();
 
             foreach (var ctx in contexts)
             {
@@ -43,17 +45,26 @@ namespace MusicTypePatcher
         {
             using var loadOrder = state.LoadOrder;
 
+            var mastersMapping = loadOrder.ListedOrder
+                .Where(x => x.Mod != null)
+                .ToDictionary(
+                    x => x.ModKey,
+                    x => x.Mod!.MasterReferences.Select(x => x.Master).ToArray());
+
             foreach (var musicType in loadOrder.PriorityOrder.OnlyEnabled().MusicType().WinningOverrides())
             {
                 Console.WriteLine("Processing MusicType {0}", musicType);
-                ProcessMusicType(state, musicType);
+                ProcessMusicType(state, mastersMapping, musicType.ToLink());
             }
         }
 
-        private static void ProcessMusicType(IPatcherState<ISkyrimMod, ISkyrimModGetter> state, IMusicTypeGetter musicType)
+        private static void ProcessMusicType(
+            IPatcherState<ISkyrimMod, ISkyrimModGetter> state,
+            IReadOnlyDictionary<ModKey, ModKey[]> masterLookup,
+            IFormLinkGetter<IMusicTypeGetter> musicType)
         {
-            var origin = state.LinkCache.Resolve<IMusicTypeGetter>(musicType.FormKey);
-            var extentContexts = ExtentContexts<IMusicTypeGetter>(state, musicType.FormKey).ToList();
+            var origin = musicType.Resolve(state.LinkCache);
+            var extentContexts = ExtentContexts(state, masterLookup, musicType).ToList();
             if (extentContexts.Count < 2)
             {
                 return;
@@ -64,12 +75,12 @@ namespace MusicTypePatcher
             copy.VersionControl = Timestamp;
             copy.Tracks = new ExtendedList<IFormLinkGetter<IMusicTrackGetter>>();
 
-            var originalTracks = origin.Tracks.EmptyIfNull();
-            int originalTrackCount = originalTracks.Count();
+            var originalTracks = origin.Tracks.EmptyIfNull().ToArray();
+            int originalTrackCount = originalTracks.Length;
 
-            var extentTracks = extentContexts.Select(static i => i.Record.Tracks.EmptyIfNull());
+            var extentTracks = extentContexts.Select(static i => i.Record.Tracks.EmptyIfNull().ToArray()).ToArray();
 
-            extentTracks.Aggregate(originalTracks, (i, k) => i.Intersection(k)).ForEach(copy.Tracks.Add);
+            extentTracks.Aggregate(originalTracks, (i, k) => i.Intersection(k).ToArray()).ForEach(copy.Tracks.Add);
             copy.Tracks.AddRange(extentTracks.SelectMany(i => i.DisjunctLeft(copy.Tracks)));
 
             Console.WriteLine("Copied {0} tracks to {1}", copy.Tracks.Count - originalTrackCount, copy.EditorID);
